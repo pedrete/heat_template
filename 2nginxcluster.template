@@ -1,0 +1,245 @@
+#!highlight yaml
+heat_template_version: 2013-05-23
+
+description: >
+    HOT template to deploy two servers into an existing neutron tenant network and
+    assign floating IP addresses to each server so they are routable from the
+    public network.
+
+parameters:
+  image:
+     type: string
+     description: Name of image to use for servers
+     default: centos6.5 
+     #default: TID-Template1Nic-rhel6.5 
+               
+  key_name:
+     type: string
+     description: Name of keypair to assign to servers
+     default: openstacksdowd
+
+  flavor:
+    type: string
+    description: Flavor to use for servers
+    default: TID-01CPU-01GB-20GB
+  public_management:
+    type: string
+    description: >
+      ID of public network for which floating IP addresses will be allocated
+    default: 8e740863-8441-46bc-b89c-153bfb0edae3
+  red_gestion:
+    type: string
+    description: ID of private network into which servers get deployed
+    default: aaf6d4e6-0f13-4e0a-a086-beeda19b41f1
+  red_servicio:
+    type: string
+    description: ID of private network into which servers get deployed
+    default: 4a4f012d-258f-4ec0-9331-0b7323c32dfe
+  red_ha: 
+    type: string
+    description: heartbeat net
+    default: 0483f217-9746-4f13-acd2-f38d73e02edc
+  
+  conf:
+    type: string
+    default: myscript.sh
+
+    type: string
+    description: Admin password
+    default: owdtemporal
+  db_port_param:
+    type: string
+    default: "27017"
+  proxyTid:
+    type: string
+    default: "http://prod-epg-ost-proxy-01.hi.inet:6666"
+  portha1:
+    type: string
+    default: "10.0.0.24"
+  portha2:
+    type: string
+    default: "10.0.0.25"
+  hostname_1:
+    type: string
+  hostname_2:
+    type: string  
+resources: 
+  LBWS1:
+    type: OS::Nova::Server
+    properties:
+      name: {get_param: hostname_1}
+      #admin_pass: { get_param: admin_pass }
+
+      image: { get_param: image }
+      flavor: { get_param: flavor }
+      key_name: { get_param: key_name }
+      security_groups :  [{get_resource: server_security_group}]
+      networks:
+        - port: { get_resource: "PortManagement-1"}
+        - port: { get_resource: "PortHA-1"}
+        - port: { get_resource: "PortServicio-1"}
+      user_data:
+             str_replace:
+                   template: |
+                        #!/bin/bash -v
+                        cp /etc/sysconfig/network-scripts/ifcfg-eth0 /etc/sysconfig/network-scripts/ifcfg-eth1
+                        cp /etc/sysconfig/network-scripts/ifcfg-eth0 /etc/sysconfig/network-scripts/ifcfg-eth2
+                        sed -i "s/eth0/eth1/" /etc/sysconfig/network-scripts/ifcfg-eth1
+                        sed -i "s/eth0/eth2/" /etc/sysconfig/network-scripts/ifcfg-eth2
+                        ifup eth1
+                        ifup eth2
+                        rpm -ivh http://yum.puppetlabs.com/puppetlabs-release-el-6.noarch.rpm
+                        rpm -Uvh http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+                        yum install -y puppet nginx vim git nc telnet
+                        yum install -y pacemaker cman pcs ccs resource-agents
+                        rpm -ivh  http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+                        yum install -y nginx
+                        echo `hostname` >/usr/share/nginx/html/index.html
+                        /etc/init.d/iptables stop
+                        sed -i "/openstacklocal/d" /etc/resolv.conf
+                        echo "pPortHA1 pHostname1" >>/etc/hosts
+                        echo "pPortHA2 pHostname2" >>/etc/hosts
+                        puppet resource yumrepo 'puppet-code' baseurl='http://artifactory.hi.inet/artifactory/yum-puppet/x86_64' descr='Puppet repositories' enabled='1' gpgcheck='0' proxy='http://prod-epg-ost-proxy-01.hi.inet:6666'
+                        yum install -y tid-puppet-owd
+                        cd /opt/tid/puppet/owd/
+                        puppet apply --environment integration --modulepath=modules manifests/nodes/pacemaker.pp --debug --logdest /var/puppet_execution/log_puppet.txt --logdest console --detailed-exitcodes
+
+
+                   params:
+                        pProxyTid: { get_param: proxyTid }
+                        pPortHA1: {get_param: portha1 }
+                        pPortHA2: {get_param: portha2 }
+                        pHostname1: {get_param: hostname_1}
+                        pHostname2: {get_param: hostname_2}
+                        #pPortHA1:  { get_attr: [LBWS1, networks,PortHA-1,fixed_ips ] }
+                        #pPortHA1: { get_attr: [PortHA-1, fixed_ips ] }
+                        #pPortHA2: { get_attr: [PortHA-2, fixed_ips ] }
+  LBWS2:
+    type: OS::Nova::Server
+    properties:
+      name: {get_param: hostname_2}
+      #admin_pass: { get_param: admin_pass }
+
+      image: { get_param: image }
+      flavor: { get_param: flavor }
+      key_name: { get_param: key_name }
+      security_groups :  [{get_resource: server_security_group}]
+      networks:
+        - port: { get_resource: "PortManagement-2"}
+        - port: { get_resource: "PortHA-2"}
+        - port: { get_resource: "PortServicio-2"}
+      user_data:
+             str_replace:
+                   template: |
+                        #!/bin/bash -v
+                        cp /etc/sysconfig/network-scripts/ifcfg-eth0 /etc/sysconfig/network-scripts/ifcfg-eth1
+                        cp /etc/sysconfig/network-scripts/ifcfg-eth0 /etc/sysconfig/network-scripts/ifcfg-eth2
+                        sed -i "s/eth0/eth1/" /etc/sysconfig/network-scripts/ifcfg-eth1
+                        sed -i "s/eth0/eth2/" /etc/sysconfig/network-scripts/ifcfg-eth2
+                        ifup eth1
+                        ifup eth2
+                        rpm -ivh http://yum.puppetlabs.com/puppetlabs-release-el-6.noarch.rpm
+                        rpm -Uvh http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+                        yum install -y puppet nginx vim git nc telnet
+                        yum install -y pacemaker cman pcs ccs resource-agents
+                        rpm -ivh  http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+                        yum install -y nginx
+                        echo `hostname` >/usr/share/nginx/html/index.html
+                        /etc/init.d/iptables stop
+                        sed -i "/openstacklocal/d" /etc/resolv.conf
+                        echo "pPortHA1 pHostname1" >>/etc/hosts
+                        echo "pPortHA2 pHostname2" >>/etc/hosts
+                        puppet resource yumrepo 'puppet-code' baseurl='http://artifactory.hi.inet/artifactory/yum-puppet/x86_64' descr='Puppet repositories' enabled='1' gpgcheck='0' proxy='http://prod-epg-ost-proxy-01.hi.inet:6666'
+                        yum install -y tid-puppet-owd
+                        cd /opt/tid/puppet/owd/
+                        puppet apply --environment integration --modulepath=modules manifests/nodes/pacemaker.pp --debug --logdest /var/puppet_execution/log_puppet.txt --logdest console --detailed-exitcodes
+
+                   params:
+                       pProxyTid: { get_param: proxyTid }
+                       pPortHA1: {get_param: portha1 }
+                       pPortHA2: {get_param: portha2 }
+                       pHostname1: {get_param: hostname_1}
+                       pHostname2: {get_param: hostname_2}
+
+
+  server_security_group:
+    type: AWS::EC2::SecurityGroup
+    properties:
+      GroupDescription: Add security group rules for server
+    SecurityGroupIngress : [
+      {"IpProtocol" : "tcp", "FromPort" : "1", "ToPort" : "90000", "CidrIp" : "0.0.0.0/0"},
+    ]
+    SecurityGroupEgress : [
+      {"IpProtocol" : "tcp", "FromPort" : "0", "ToPort" : "90000", "CidrIp" : "0.0.0.0/0"},
+    ]
+
+  IPFlotante-1: 
+    type: OS::Neutron::FloatingIP
+    properties:
+        floating_network_id: {get_param: public_management}
+
+
+  PortManagement-1:
+    type: OS::Neutron::Port
+    properties: 
+            network_id: {get_param: red_gestion}
+
+  IPAssoc-1:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+        floatingip_id: {get_resource: IPFlotante-1}
+        port_id: {get_resource: PortManagement-1}
+
+  PortServicio-1:
+        type: OS::Neutron::Port
+        properties:
+            network_id: { get_param: red_servicio }
+   
+  PortHA-1: 
+        type: OS::Neutron::Port
+        properties: 
+            network_id: {get_param: red_ha}
+            fixed_ips: ["ip_address":{get_param: portha1},]
+   
+        
+
+  IPFlotante-2: 
+    type: OS::Neutron::FloatingIP
+    properties:
+        floating_network_id: {get_param: public_management}
+        #fixed_ip_address: "10.95.213.29"
+        #port_id: {get_resource: PortManagement-2}
+
+  PortManagement-2:
+    type: OS::Neutron::Port
+    properties: 
+            network_id: {get_param: red_gestion}
+
+  IPAssoc-2:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+        floatingip_id: {get_resource: IPFlotante-2}
+        port_id: {get_resource: PortManagement-2}
+       # fixed_ips: [
+        #        {"ip_address":"10.95.213.223"},
+         #   ]
+
+
+  PortServicio-2:
+        type: OS::Neutron::Port
+        properties:
+            network_id: { get_param: red_servicio }
+  PortHA-2: 
+        type: OS::Neutron::Port
+        properties: 
+            network_id: {get_param: red_ha}
+            fixed_ips: ["ip_address":{get_param: portha2},]
+
+
+outputs:
+  LBWS1:
+    description: IP address of server1 in private network
+    value: { get_attr: [ LBWS1, first_address ] }
+  LBWS2:
+    description: Floating IP address of server1 in public network
+    value: { get_attr: [ IPFlotante-2, floating_ip_address ] }
